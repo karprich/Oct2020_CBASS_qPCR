@@ -1,0 +1,123 @@
+---
+title: "October 2020 CBASS qPCR Analysis"
+author: "Rich"
+date: "1/14/2021"
+output: 
+  html_document:
+    code_folding: hide
+  
+---
+
+```{r setup and load libraries, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, cache = TRUE, fig.width=6, fig.asp=.618, out.width='70%', fig.align='center')
+
+#Tidy Data and Easy Wrangling
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+library(readxl)
+library(lubridate)
+library(devtools)
+library(magrittr)
+library(purrr)
+
+library(kableExtra)
+library(knitr)
+
+#qPCR
+library(steponeR)
+
+#Basic Stats
+library(broom)
+library(rstatix)
+library(emmeans)
+library(multcomp)
+
+```
+
+## October 2020 qPCR CBASS Analysis
+
+### Introduction: 
+
+These samples were collected from the 32^o^C tanks (check) during the October 2020 Florida Keys CBASS cruise. Ross has already performed heat tolerance on the data.
+
+All samples were run with A actin, Acer cam SYBR master mix and D GTMM
+
+```{r load in data, include=FALSE}
+
+plates <- list.files(path="qPCR/csv",pattern="csv$", full.names=TRUE)
+
+data<-steponeR(files=plates, target.ratios=c('A.Acer', "D.Acer"),
+               fluor.norm=list(A=0, D=0, Acer=0),
+               copy.number=list(A=9, D=3, Acer=1),
+               ploidy=list(A=1, D=1, Acer=2),
+               extract=list(A=.813, D=0.813, Acer=.982))
+
+data <- data$result
+
+data %<>% separate(Sample.Name, into = c('Cruise', 'Nursery', 'SampleName'), sep = '_', remove = FALSE) %>%
+  mutate('Species'=str_sub(SampleName, 1, 2), 'Genotype'=str_sub(SampleName, 3, length(SampleName)))
+
+```
+
+```{r QC, echo=TRUE}
+
+# Show samples that didn't work
+fails <- data %>%
+  filter(Acer.reps!=2 | Acer.CT.sd>1.5 | A.CT.sd > 1.5)
+
+rerun <- fails %>%
+  filter(!is.na(Genotype)& Cruise!='NSF')
+
+#Good data
+data %<>% anti_join(., fails, by= 'Sample.Name')
+
+#Check for D
+dRerun <- data %>%
+  filter(D.reps==2 & D.CT.sd>1.5 | D.reps==1)
+
+#Change D
+data %<>% mutate(D.Acer=ifelse(D.reps!=0 & D.CT.sd>1.5, NA, D.Acer))
+
+# Set no detections to value below minimum detected value
+data <- data %>%
+  mutate(A.Acer = ifelse(is.na(A.Acer), min(A.Acer, na.rm = T) * 0.5, A.Acer),
+         D.Acer = ifelse(is.na(D.Acer), min(D.Acer, na.rm = T) * 0.5, D.Acer))
+
+data <- data %>%
+  dplyr::select(Nursery, Species, Genotype, A.Acer, D.Acer, Acer.reps, A.reps, D.reps) %>%
+  mutate(Species=ifelse(Species=='Ac', 'Acer', 'Apal'), 
+         Dominant=ifelse(A.Acer>D.Acer & A.reps==2, 'A', 
+                         ifelse(D.Acer>A.Acer & D.reps==2, 'D', 'A'))) 
+
+```
+
+```{r Basic Data plots, echo=TRUE}
+
+p <- ggplot(data, aes(Nursery, log10(A.Acer))) +
+  geom_violin(draw_quantiles = T)+
+  geom_jitter(aes(color=Dominant)) +
+  facet_wrap(~Species) +
+  labs(x='Nursery', y='log10(SH)')
+
+p
+
+mod <- data %>%
+  filter(Dominant=='A', Species=='Acer') %>%
+  lm(log10(A.Acer) ~Nursery, data=.)
+
+tidy(anova(mod)) 
+
+pwpp(emmeans(mod, 'Nursery'))
+
+```
+
+### Basic Summary 
+
+This is ~60% of the qPCR data that we have. The SH for the RRT Nursery is significantly higher than the rest. The was one sample from RRT that had detectable D and was dominant.
+
+Follow up questions:
+
+1. Was there a difference in thermal tolerance at RRT?
