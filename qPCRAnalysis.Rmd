@@ -58,7 +58,7 @@ data<-steponeR(files=plates, target.ratios=c('A.Acer', "D.Acer"),
 data <- data$result
 
 data %<>% separate(Sample.Name, into = c('Cruise', 'Nursery', 'SampleName'), sep = '_', remove = FALSE) %>%
-  mutate('Species'=str_sub(SampleName, 1, 2), 'Genotype'=str_sub(SampleName, 3, length(SampleName)))
+  mutate('Species'=str_sub(SampleName, 1, 2), 'Genotype'=str_sub(SampleName, 3, length(SampleName))) 
 
 ```
 
@@ -68,56 +68,118 @@ data %<>% separate(Sample.Name, into = c('Cruise', 'Nursery', 'SampleName'), sep
 fails <- data %>%
   filter(Acer.reps!=2 | Acer.CT.sd>1.5 | A.CT.sd > 1.5)
 
-rerun <- fails %>%
-  filter(!is.na(Genotype)& Cruise!='NSF')
+# rerun <- fails %>%
+#   filter(!is.na(Genotype)& Cruise!='NSF') %>%
+#   mutate('Reason'='highSD')
 
 #Good data
 data %<>% anti_join(., fails, by= 'Sample.Name')
 
-#Check for D
-dRerun <- data %>%
-  filter(D.reps==2 & D.CT.sd>1.5 | D.reps==1)
+uniqueSamples <- data %>%
+  filter(Sample.Name != c('+', 'NTC') & Cruise!='NSF' & !is.na(SampleName)) %>%
+  dplyr::count(cc = interaction(Nursery, SampleName)) %>% filter(n >= 1)
+
+
+# 
+# #Check for D
+# dRerun <- data %>%
+#   filter(D.reps==2 | D.reps==1)%>%
+#   mutate('Reason'='Dcheck')
+# 
+# reruns <- bind_rows(rerun, dRerun) %>%
+#   dplyr::select(Nursery, SampleName, Reason, File.Name) 
+
+#newReruns <- anti_join(reruns, originalReruns, by=c('Nursery', 'SampleName'))
 
 #Change D
 data %<>% mutate(D.Acer=ifelse(D.reps!=0 & D.CT.sd>1.5, NA, D.Acer))
 
+#Duplicates ross way
+dups <- data %>% dplyr::count(cc = interaction(Nursery, SampleName)) %>% filter(n >= 2)
+
+# Choose run with lowest mean sd for C and D
+selected <- data %>%
+  filter(interaction(Nursery, SampleName) %in% dups$cc) %>%
+  rowwise() %>%
+  mutate(meanctsd = mean(c(A.CT.sd, Acer.CT.sd, D.CT.sd), na.rm = T)) %>%
+  group_by(interaction(Nursery, SampleName)) %>%
+  slice(which.min(meanctsd)) %>%
+  mutate(FileNumber=str_sub(File.Name, str_length(File.Name)-5, str_length(File.Name)-4))
+# Keep selected with other rows
+df <- data %>%
+  filter(!interaction(Nursery, SampleName) %in% dups$cc) %>%
+  bind_rows(selected)
+
 # Set no detections to value below minimum detected value
-data <- data %>%
+data <- df %>%
   mutate(A.Acer = ifelse(is.na(A.Acer), min(A.Acer, na.rm = T) * 0.5, A.Acer),
          D.Acer = ifelse(is.na(D.Acer), min(D.Acer, na.rm = T) * 0.5, D.Acer))
 
 data <- data %>%
-  dplyr::select(Nursery, Species, Genotype, A.Acer, D.Acer, Acer.reps, A.reps, D.reps) %>%
+  filter(!is.na(SampleName)&Nursery!='7') %>%
+  dplyr::select(Nursery, Species, Genotype, A.Acer, D.Acer, Acer.reps, A.reps, D.reps, File.Name) %>%
   mutate(Species=ifelse(Species=='Ac', 'Acer', 'Apal'), 
          Dominant=ifelse(A.Acer>D.Acer & A.reps==2, 'A', 
-                         ifelse(D.Acer>A.Acer & D.reps==2, 'D', 'A'))) 
+                         ifelse(D.Acer>A.Acer & D.reps==2, 'D', 'A')),
+         SH=ifelse(Dominant=='A', log10(A.Acer), log10(D.Acer))) %>%
+  convert_as_factor(., vars=c('Nursery', 'Species', 'Genotype', 'Dominant')) %>%
+  droplevels(.)
+
 
 ```
 
 ```{r Basic Data plots, echo=TRUE}
 
-p <- ggplot(data, aes(Nursery, log10(A.Acer))) +
+p <- ggplot(data, aes(reorder(Nursery, -SH), SH)) +
   geom_violin(draw_quantiles = T)+
   geom_jitter(aes(color=Dominant)) +
   facet_wrap(~Species) +
-  labs(x='Nursery', y='log10(SH)')
+  labs(x='Nursery', y='log10(SH)') +
+  scale_color_brewer(palette = 'Dark2')
 
 p
 
 mod <- data %>%
   filter(Dominant=='A', Species=='Acer') %>%
-  lm(log10(A.Acer) ~Nursery, data=.)
+  #split(.$Species) %>%
+  lm(SH ~Nursery, data=.)
 
-tidy(anova(mod)) 
+lsm <- emmeans(mod, 'Nursery')
+
+
+anova(mod) %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'), full_width = FALSE)
+
+cld(lsm) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c('striped', 'hover', 'condensed'), full_width = FALSE)
 
 pwpp(emmeans(mod, 'Nursery'))
 
 ```
 
+```{r determine outliers, eval=FALSE}
+
+outliers <- data %>%
+  group_by(Species) %>%
+  identify_outliers(SH)
+
+
+
+
+newReruns <- outliers %>%
+  mutate(Reason='Outlier') %>%
+  dplyr::select(Nursery, Nursery, Genotype, Reason, File.Name) %>%
+  bind_rows(., newReruns)
+
+```
+
+
 ### Basic Summary 
 
-This is ~60% of the qPCR data that we have. The SH for the RRT Nursery is significantly higher than the rest. The was one sample from RRT that had detectable D and was dominant.
+All the samples have been through on qPCR and two nurseries have higher SH than the rest. Does this translate to differences in thermal tolerance. There is one outlier.
 
 Follow up questions:
 
-1. Was there a difference in thermal tolerance at RRT?
+1. Was there a difference in thermal tolerance at RRT and UM?
