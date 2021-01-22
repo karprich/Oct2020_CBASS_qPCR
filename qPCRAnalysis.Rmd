@@ -34,7 +34,7 @@ library(broom)
 library(rstatix)
 library(emmeans)
 library(multcomp)
-
+library(lmerTest)
 ```
 
 ## October 2020 qPCR CBASS Analysis
@@ -174,6 +174,51 @@ newReruns <- outliers %>%
   bind_rows(., newReruns)
 
 ```
+```{r import ED50, echo=FALSE}
+
+ed50 <- read_csv("Ed50.csv") %>%
+  filter(Nursery!='kjs') %>%
+  mutate(Nursery=str_to_upper(Nursery))
+
+
+acer <- data %>%
+  filter(Species=='Acer') %>%
+  mutate(Nursery=str_to_upper(Nursery),
+         Genotype=case_when(Nursery=='CRF' & str_length(Genotype)==3 ~paste0('CRF', Genotype),
+                            Nursery=='CRF' & str_length(Genotype)==2 ~paste0('CRF0', Genotype),
+                            Nursery=='CRF' & str_length(Genotype)==1 ~paste0('CRF00', Genotype),
+                            Nursery=='RRT' & Genotype %in% 
+                              c('120', '121', '122', '123', '126')~paste0('Acer', Genotype),
+                            Nursery=='RRT' & Genotype =='FM6A' ~ 'FM6(A)',
+                            Nursery=='RRT' & Genotype =='FM6B' ~ 'FM6(B)',
+                            Nursery=='RRT' & Genotype =='FM6C' ~ 'FM6(C)',
+                            Nursery=='RRT' & Genotype =='U15A' ~ 'U15(A)',
+                            Nursery=='RRT' & Genotype =='U15B' ~ 'U15(B)',
+                            TRUE~ as.character(Genotype))) 
+
+shEd <- left_join(acer, ed50, by=c('Nursery', 'Genotype'='Geno'))
+
+notCombined <-  shEd %>%
+  filter(is.na(ed50))
+
+shEd %<>% filter(!is.na(ed50)) 
+
+
+```
+
+```{r stats and plot SH vs Ed50, echo=FALSE}
+p <- ggplot(shEd, aes(SH, ed50)) +
+  geom_point(aes(color=Nursery, shape=Dominant)) +
+  scale_color_brewer(palette = 'Dark2')
+p
+
+basicMod <- shEd %>%
+  #filter(Nursery!='RRT') %>%
+  lmer(ed50~SH+(1|Nursery), data=.)
+
+summary(basicMod)
+
+```
 
 
 ### Basic Summary 
@@ -183,3 +228,5 @@ All the samples have been through on qPCR and two nurseries have higher SH than 
 Follow up questions:
 
 1. Was there a difference in thermal tolerance at RRT and UM?
+
+Off of a first pass of the ED50s from Ross's GitHub initial SH is not significant (p=0.113) with Nursery as a random effect, but I am sure there are other models to look at. Initally the one colony containing D did have higher Ed50 given its initial SH.

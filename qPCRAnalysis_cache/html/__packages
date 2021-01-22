@@ -14,6 +14,8 @@ lubridate
 usethis
 devtools
 magrittr
+kableExtra
+knitr
 steponeR
 broom
 rstatix
@@ -23,5 +25,6 @@ survival
 MASS
 TH.data
 multcomp
-kableExtra
-knitr
+Matrix
+lme4
+lmerTest
